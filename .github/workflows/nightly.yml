@@ -1,0 +1,49 @@
+name: Nightly Build
+
+on:
+  schedule:
+    - cron: "13 4 * * *"   # daily 04:13 UTC
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Recompute metrics & snapshot & build PDF
+        run: |
+          python - << 'PY'
+import pandas as pd, datetime as dt, os
+from engine.compute_metrics import compute_team_metrics
+from reports.build_daily_report import build_pdf
+
+players = pd.read_csv("data/players.csv")
+daily   = pd.read_csv("data/daily_input.csv")
+
+df = daily.merge(players, on="player_id", how="left")
+df["date"] = pd.to_datetime(df["date"])
+df = compute_team_metrics(df)
+
+snap = f"data/snapshots/team_{dt.date.today().isoformat()}.csv"
+os.makedirs("data/snapshots", exist_ok=True)
+df.to_csv(snap, index=False)
+print("Wrote", snap)
+
+# Build PDF report
+os.makedirs("reports", exist_ok=True)
+pdf_path = f"reports/daily_report_{dt.date.today().isoformat()}.pdf"
+build_pdf(df, path=pdf_path)
+print("Wrote", pdf_path)
+PY
+      - name: Commit artifacts
+        run: |
+          git config user.name "locker-bot"
+          git config user.email "locker-bot@example.com"
+          git add -A
+          git commit -m "Nightly snapshot & report" || echo "No changes"
+          git push
